@@ -2,279 +2,389 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>BCMNeuro — Production EEG Engine</title>
+<title>BCMNeuro — Continuous Brain Intelligence</title>
+
 <style>
-body { background:#0b1220; color:white; font-family:system-ui; padding:30px; }
-button { padding:10px 15px; margin-top:10px; }
-pre { background:#111827; padding:15px; border-radius:8px; overflow:auto; }
+body{
+  background:#050814;
+  color:#e6f0ff;
+  font-family:system-ui;
+  margin:0;
+}
+
+header{
+  padding:20px 30px;
+  font-size:22px;
+  font-weight:700;
+  border-bottom:1px solid #1b2a44;
+}
+
+.container{
+  padding:30px;
+}
+
+.card{
+  background:#0b1224;
+  border:1px solid #1b2a44;
+  border-radius:12px;
+  padding:18px;
+  margin-bottom:20px;
+}
+
+button{
+  padding:10px 18px;
+  font-weight:600;
+  background:#3b82f6;
+  border:none;
+  border-radius:8px;
+  color:white;
+  cursor:pointer;
+}
+
+button:hover{ background:#2563eb; }
+
+.grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:20px;
+}
+
+#network{
+  width:100%;
+  height:420px;
+  background:#020617;
+  border-radius:12px;
+}
+
+.metric{ font-size:14px; margin:6px 0; }
+
+.report{
+  white-space:pre-wrap;
+  line-height:1.5;
+}
 </style>
 </head>
 <body>
 
-<h1>BCMNeuro — Real EEG Processing</h1>
+<header>🧠 BCMNeuro — Continuous Brain Intelligence</header>
 
+<div class="container">
+
+<div class="card">
 <input type="file" id="fileInput">
-<br>
-<button onclick="analyze()">Analyze EEG</button>
+<button onclick="analyze()">Analyze Neural Activity</button>
+<div id="status"></div>
+</div>
 
-<pre id="out">Waiting...</pre>
+<div class="grid">
+
+<div class="card">
+<h3>Neural Metrics</h3>
+<div id="metrics"></div>
+</div>
+
+<div class="card">
+<h3>Frequency Profile</h3>
+<div id="bands"></div>
+</div>
+
+</div>
+
+<div class="card">
+<h3>Connectivity Network</h3>
+<canvas id="network"></canvas>
+</div>
+
+<div class="card">
+<h3>AI Clinical Interpretation</h3>
+<div id="report" class="report"></div>
+</div>
+
+</div>
 
 <script>
 // ===============================
-// CONSTANTS
+// CONFIG
 // ===============================
 
-const BANDS = {
-  delta:[0.5,4],
-  theta:[4,8],
-  alpha:[8,12],
-  beta:[12,30],
-  gamma:[30,45]
+const BANDS={
+delta:[0.5,4], theta:[4,8], alpha:[8,12],
+beta:[12,30], gamma:[30,45]
 };
 
-const MIN_DURATION = 5;
-const MIN_CHANNELS = 2;
+const DEFAULT_FS=256;
 
 // ===============================
-// CSV LOADER
+// CSV PARSE
 // ===============================
 
 function parseCSV(text){
-  const rows = text.trim().split(/\r?\n/);
-  const data = [];
+  const rows=text.trim().split(/\r?\n/);
+  const data=[];
 
   for(let i=1;i<rows.length;i++){
-    const nums = rows[i].split(',').map(Number);
-    if(nums.some(x => !isFinite(x))) continue;
-    data.push(nums);
+    const nums=rows[i].split(',').map(Number);
+    if(nums.every(x=>isFinite(x))) data.push(nums);
   }
-
   return data;
 }
 
 // ===============================
-// VALIDATION
+// MATH HELPERS
 // ===============================
 
-function validate(data, fs){
-  if(!data.length) return "Empty dataset";
+const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
 
-  const samples = data.length;
-  const channels = data[0].length;
-
-  if(channels < MIN_CHANNELS)
-    return "Need at least 2 channels";
-
-  if(samples/fs < MIN_DURATION)
-    return "Recording too short";
-
-  return null;
+function std(a){
+  const m=mean(a);
+  return Math.sqrt(mean(a.map(x=>(x-m)**2)))||1;
 }
 
-// ===============================
-// BASIC SIGNAL HELPERS
-// ===============================
+function detrend(a){
+  const n=a.length;
+  const xm=(n-1)/2, ym=mean(a);
+  let num=0,den=0;
 
-function mean(arr){
-  return arr.reduce((a,b)=>a+b,0)/arr.length;
-}
-
-function std(arr){
-  const m = mean(arr);
-  return Math.sqrt(mean(arr.map(x => (x-m)*(x-m))));
-}
-
-function detrend(arr){
-  const n = arr.length;
-  const xMean = (n-1)/2;
-  const yMean = mean(arr);
-
-  let num=0, den=0;
   for(let i=0;i<n;i++){
-    num += (i-xMean)*(arr[i]-yMean);
-    den += (i-xMean)*(i-xMean);
+    num+=(i-xm)*(a[i]-ym);
+    den+=(i-xm)*(i-xm);
   }
 
-  const slope = num/den;
-  const intercept = yMean - slope*xMean;
+  const slope=num/den;
+  const b=ym-slope*xm;
 
-  return arr.map((y,i)=> y - (slope*i + intercept));
+  return a.map((y,i)=>y-(slope*i+b));
 }
 
-function normalize(arr){
-  const m = mean(arr);
-  const s = std(arr) || 1;
-  return arr.map(x => (x-m)/s);
+function normalize(a){
+  const m=mean(a), s=std(a);
+  return a.map(x=>(x-m)/s);
 }
 
 // ===============================
-// WELCH PSD
+// PSD (Welch simplified)
 // ===============================
 
-function welchPSD(signal, fs){
-  const N = signal.length;
-  const seg = Math.min(N, fs*4|0);
-  const step = seg/2|0;
+function welch(signal,fs){
+  const N=signal.length;
+  const seg=Math.min(N,fs*2|0);
+  const step=seg/2|0;
 
-  const psd = new Array(seg/2).fill(0);
-  let count = 0;
+  const psd=new Array(seg/2).fill(0);
+  let count=0;
 
-  for(let start=0; start+seg<=N; start+=step){
-    const window = signal.slice(start,start+seg);
+  for(let s=0;s+seg<=N;s+=step){
+    const w=signal.slice(s,s+seg);
 
     for(let k=0;k<seg/2;k++){
-      let re=0, im=0;
+      let re=0,im=0;
       for(let n=0;n<seg;n++){
-        const angle = 2*Math.PI*k*n/seg;
-        re += window[n]*Math.cos(angle);
-        im -= window[n]*Math.sin(angle);
+        const ang=2*Math.PI*k*n/seg;
+        re+=w[n]*Math.cos(ang);
+        im-=w[n]*Math.sin(ang);
       }
-      const power = (re*re + im*im)/seg;
-      psd[k] += power;
+      psd[k]+=(re*re+im*im)/seg;
     }
-
     count++;
   }
 
-  for(let i=0;i<psd.length;i++) psd[i] /= count;
+  for(let i=0;i<psd.length;i++) psd[i]/=count;
 
-  const freqs = psd.map((_,i)=> i*fs/seg);
-
-  return {freqs, psd};
+  const freqs=psd.map((_,i)=>i*fs/seg);
+  return {freqs,psd};
 }
 
 // ===============================
 // BAND POWER
 // ===============================
 
-function bandPowers(signal, fs){
-  const {freqs, psd} = welchPSD(signal, fs);
-  const result = {};
+function bandPower(sig,fs){
+  const {freqs,psd}=welch(sig,fs);
+  const total=psd.reduce((a,b)=>a+b,0)||1;
 
-  const total = psd.reduce((a,b)=>a+b,0) || 1;
+  const out={};
 
-  for(const band in BANDS){
-    const [lo,hi] = BANDS[band];
-    let power = 0;
+  for(const b in BANDS){
+    const [lo,hi]=BANDS[b];
+    let p=0;
 
-    for(let i=0;i<freqs.length;i++){
-      if(freqs[i]>=lo && freqs[i]<=hi)
-        power += psd[i];
-    }
+    for(let i=0;i<freqs.length;i++)
+      if(freqs[i]>=lo && freqs[i]<=hi) p+=psd[i];
 
-    result[band] = {
-      absolute: power,
-      relative: 100*power/total
-    };
+    out[b]={abs:p, rel:100*p/total};
   }
-
-  return result;
+  return out;
 }
 
 // ===============================
-// CONNECTIVITY (PEARSON)
+// CONNECTIVITY
 // ===============================
 
-function pearson(a,b){
-  const ma = mean(a);
-  const mb = mean(b);
-
-  let num=0, da=0, db=0;
+function corr(a,b){
+  const ma=mean(a), mb=mean(b);
+  let num=0,da=0,db=0;
 
   for(let i=0;i<a.length;i++){
     const x=a[i]-ma, y=b[i]-mb;
-    num += x*y;
-    da += x*x;
-    db += y*y;
+    num+=x*y; da+=x*x; db+=y*y;
   }
-
-  return num/Math.sqrt(da*db || 1);
+  return num/Math.sqrt(da*db||1);
 }
 
-function connectivityMatrix(data){
-  const ch = data[0].length;
-  const mat = Array.from({length:ch},()=>Array(ch).fill(0));
+function connectivity(data){
+  const ch=data[0].length;
+  const mat=Array.from({length:ch},()=>Array(ch).fill(0));
 
   for(let i=0;i<ch;i++){
-    const a = data.map(r=>r[i]);
-
+    const a=data.map(r=>r[i]);
     for(let j=i+1;j<ch;j++){
-      const b = data.map(r=>r[j]);
-      const r = pearson(a,b);
-      mat[i][j]=mat[j][i]=r;
+      const b=data.map(r=>r[j]);
+      mat[i][j]=mat[j][i]=corr(a,b);
     }
   }
-
   return mat;
 }
 
 // ===============================
-// METRICS
+// VISUALIZATION
 // ===============================
 
-function globalConnectivity(mat){
-  let sum=0,count=0;
+function drawNetwork(mat){
+  const c=document.getElementById("network");
+  const ctx=c.getContext("2d");
+  c.width=c.offsetWidth;
+  c.height=c.offsetHeight;
 
-  for(let i=0;i<mat.length;i++){
-    for(let j=i+1;j<mat.length;j++){
-      sum += Math.abs(mat[i][j]);
-      count++;
+  const n=mat.length;
+  const nodes=[];
+
+  for(let i=0;i<n;i++){
+    nodes.push({
+      x:c.width/2+200*Math.cos(2*Math.PI*i/n),
+      y:c.height/2+200*Math.sin(2*Math.PI*i/n)
+    });
+  }
+
+  ctx.clearRect(0,0,c.width,c.height);
+
+  ctx.strokeStyle="#3b82f6";
+
+  for(let i=0;i<n;i++){
+    for(let j=i+1;j<n;j++){
+      const w=Math.abs(mat[i][j]);
+      if(w>0.3){
+        ctx.globalAlpha=w;
+        ctx.beginPath();
+        ctx.moveTo(nodes[i].x,nodes[i].y);
+        ctx.lineTo(nodes[j].x,nodes[j].y);
+        ctx.stroke();
+      }
     }
   }
 
-  return count ? sum/count : 0;
+  ctx.globalAlpha=1;
+  nodes.forEach((p,i)=>{
+    ctx.fillStyle="#60a5fa";
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,10,0,2*Math.PI);
+    ctx.fill();
+
+    ctx.fillStyle="white";
+    ctx.fillText("Ch"+(i+1),p.x+12,p.y+4);
+  });
 }
 
 // ===============================
-// MAIN ANALYSIS
+// AI INTERPRETATION
+// ===============================
+
+function interpret(bands,conn){
+
+  let dom="alpha";
+  let max=0;
+
+  for(const b in bands)
+    if(bands[b].abs>max){ max=bands[b].abs; dom=b; }
+
+  const g=conn.flat().reduce((a,b)=>a+Math.abs(b),0)/(conn.length**2);
+
+  let text="AI Summary:\n";
+
+  text+=`Dominant rhythm: ${dom.toUpperCase()}\n`;
+  text+=`Global connectivity: ${g.toFixed(2)}\n\n`;
+
+  if(dom==="alpha")
+    text+="Profile consistent with relaxed wakefulness.";
+  else if(dom==="beta")
+    text+="Elevated fast activity suggests alert engagement.";
+  else if(dom==="theta")
+    text+="Theta dominance may indicate fatigue or cognitive load.";
+  else if(dom==="delta")
+    text+="High slow-wave activity; possible drowsiness.";
+  else
+    text+="Mixed spectral profile.";
+
+  return text;
+}
+
+// ===============================
+// MAIN
 // ===============================
 
 async function analyze(){
 
-  const file = document.getElementById("fileInput").files[0];
+  const file=fileInput.files[0];
   if(!file) return;
 
-  const text = await file.text();
-  const raw = parseCSV(text);
+  status.textContent="Processing…";
 
-  const fs = 256;
+  const raw=parseCSV(await file.text());
 
-  const err = validate(raw, fs);
-  if(err){
-    out.textContent = err;
+  if(!raw.length){
+    status.textContent="Invalid data.";
     return;
   }
 
-  // preprocess per channel
-  const samples = raw.length;
-  const ch = raw[0].length;
+  const fs=DEFAULT_FS;
 
-  const proc = [];
+  const samples=raw.length;
+  const ch=raw[0].length;
+
+  const proc=[];
 
   for(let i=0;i<samples;i++) proc[i]=[];
 
   for(let c=0;c<ch;c++){
-    let signal = raw.map(r=>r[c]);
-
-    signal = detrend(signal);
-    signal = normalize(signal);
+    let s=raw.map(r=>r[c]);
+    s=detrend(s);
+    s=normalize(s);
 
     for(let i=0;i<samples;i++)
-      proc[i][c] = signal[i];
+      proc[i][c]=s[i];
   }
 
-  const bands = bandPowers(proc.map(r=>r[0]), fs);
-  const conn = connectivityMatrix(proc);
+  const bands=bandPower(proc.map(r=>r[0]),fs);
+  const conn=connectivity(proc);
 
-  const result = {
-    status:"ok",
-    global_connectivity: globalConnectivity(conn),
-    dominant_band: Object.entries(bands)
-      .sort((a,b)=>b[1].absolute-a[1].absolute)[0][0],
-    band_powers: bands
-  };
+  // metrics
+  const globalConn=conn.flat().reduce((a,b)=>a+Math.abs(b),0)/(ch*ch);
 
-  out.textContent = JSON.stringify(result,null,2);
+  metrics.innerHTML=`
+<div class="metric">Channels: ${ch}</div>
+<div class="metric">Samples: ${samples}</div>
+<div class="metric">Connectivity: ${globalConn.toFixed(2)}</div>
+`;
+
+  bandsDiv="";
+  for(const b in bands)
+    bandsDiv+=`<div class="metric">${b}: ${bands[b].rel.toFixed(1)}%</div>`;
+  document.getElementById("bands").innerHTML=bandsDiv;
+
+  drawNetwork(conn);
+
+  report.textContent=interpret(bands,conn);
+
+  status.textContent="Analysis complete";
 }
 </script>
 
