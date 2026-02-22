@@ -1,684 +1,282 @@
-BCMNeuro — Production EEG Processing Pipeline
-=============================================
-Requirements: numpy, scipy
-Usage:
-    from eeg_pipeline import EEGPipeline
-    result = EEGPipeline(data, fs=250).run()
-"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>BCMNeuro — Production EEG Engine</title>
+<style>
+body { background:#0b1220; color:white; font-family:system-ui; padding:30px; }
+button { padding:10px 15px; margin-top:10px; }
+pre { background:#111827; padding:15px; border-radius:8px; overflow:auto; }
+</style>
+</head>
+<body>
 
-import numpy as np
-from scipy import signal as sp_signal
-from scipy.stats import pearsonr
-import warnings
+<h1>BCMNeuro — Real EEG Processing</h1>
 
+<input type="file" id="fileInput">
+<br>
+<button onclick="analyze()">Analyze EEG</button>
 
-# ─────────────────────────────────────────────
-#  CONSTANTS
-# ─────────────────────────────────────────────
+<pre id="out">Waiting...</pre>
 
-BAND_RANGES = {
-    "delta": (0.5, 4.0),
-    "theta": (4.0, 8.0),
-    "alpha": (8.0, 12.0),
-    "beta":  (12.0, 30.0),
-    "gamma": (30.0, 45.0),
+<script>
+// ===============================
+// CONSTANTS
+// ===============================
+
+const BANDS = {
+  delta:[0.5,4],
+  theta:[4,8],
+  alpha:[8,12],
+  beta:[12,30],
+  gamma:[30,45]
+};
+
+const MIN_DURATION = 5;
+const MIN_CHANNELS = 2;
+
+// ===============================
+// CSV LOADER
+// ===============================
+
+function parseCSV(text){
+  const rows = text.trim().split(/\r?\n/);
+  const data = [];
+
+  for(let i=1;i<rows.length;i++){
+    const nums = rows[i].split(',').map(Number);
+    if(nums.some(x => !isFinite(x))) continue;
+    data.push(nums);
+  }
+
+  return data;
 }
 
-MIN_DURATION_SEC   = 5.0    # minimum recording length
-MIN_CHANNELS       = 2      # need ≥2 ch for connectivity
-CLIP_THRESHOLD_SD  = 6.0    # ±6 SD = clipping flag
-ARTIFACT_THRESHOLD_SD = 5.0 # amplitude-based artifact rejection
-CONN_THRESHOLD     = 0.3    # min |r| to draw an edge
-NOTCH_CANDIDATES   = [50.0, 60.0]
+// ===============================
+// VALIDATION
+// ===============================
 
+function validate(data, fs){
+  if(!data.length) return "Empty dataset";
 
-# ─────────────────────────────────────────────
-#  RESULT HELPERS
-# ─────────────────────────────────────────────
+  const samples = data.length;
+  const channels = data[0].length;
 
-def _ok(metrics, bands, connectivity):
-    return {
-        "status": "ok",
-        "message": "Analysis completed successfully.",
-        "metrics": metrics,
-        "bands": bands,
-        "connectivity": connectivity,
+  if(channels < MIN_CHANNELS)
+    return "Need at least 2 channels";
+
+  if(samples/fs < MIN_DURATION)
+    return "Recording too short";
+
+  return null;
+}
+
+// ===============================
+// BASIC SIGNAL HELPERS
+// ===============================
+
+function mean(arr){
+  return arr.reduce((a,b)=>a+b,0)/arr.length;
+}
+
+function std(arr){
+  const m = mean(arr);
+  return Math.sqrt(mean(arr.map(x => (x-m)*(x-m))));
+}
+
+function detrend(arr){
+  const n = arr.length;
+  const xMean = (n-1)/2;
+  const yMean = mean(arr);
+
+  let num=0, den=0;
+  for(let i=0;i<n;i++){
+    num += (i-xMean)*(arr[i]-yMean);
+    den += (i-xMean)*(i-xMean);
+  }
+
+  const slope = num/den;
+  const intercept = yMean - slope*xMean;
+
+  return arr.map((y,i)=> y - (slope*i + intercept));
+}
+
+function normalize(arr){
+  const m = mean(arr);
+  const s = std(arr) || 1;
+  return arr.map(x => (x-m)/s);
+}
+
+// ===============================
+// WELCH PSD
+// ===============================
+
+function welchPSD(signal, fs){
+  const N = signal.length;
+  const seg = Math.min(N, fs*4|0);
+  const step = seg/2|0;
+
+  const psd = new Array(seg/2).fill(0);
+  let count = 0;
+
+  for(let start=0; start+seg<=N; start+=step){
+    const window = signal.slice(start,start+seg);
+
+    for(let k=0;k<seg/2;k++){
+      let re=0, im=0;
+      for(let n=0;n<seg;n++){
+        const angle = 2*Math.PI*k*n/seg;
+        re += window[n]*Math.cos(angle);
+        im -= window[n]*Math.sin(angle);
+      }
+      const power = (re*re + im*im)/seg;
+      psd[k] += power;
     }
 
-def _err(message, code="invalid_data"):
-    return {
-        "status": code,
-        "message": message,
-        "metrics": None,
-        "bands": None,
-        "connectivity": None,
+    count++;
+  }
+
+  for(let i=0;i<psd.length;i++) psd[i] /= count;
+
+  const freqs = psd.map((_,i)=> i*fs/seg);
+
+  return {freqs, psd};
+}
+
+// ===============================
+// BAND POWER
+// ===============================
+
+function bandPowers(signal, fs){
+  const {freqs, psd} = welchPSD(signal, fs);
+  const result = {};
+
+  const total = psd.reduce((a,b)=>a+b,0) || 1;
+
+  for(const band in BANDS){
+    const [lo,hi] = BANDS[band];
+    let power = 0;
+
+    for(let i=0;i<freqs.length;i++){
+      if(freqs[i]>=lo && freqs[i]<=hi)
+        power += psd[i];
     }
 
-def _warn(message, metrics, bands, connectivity):
-    return {
-        "status": "low_quality",
-        "message": message,
-        "metrics": metrics,
-        "bands": bands,
-        "connectivity": connectivity,
+    result[band] = {
+      absolute: power,
+      relative: 100*power/total
+    };
+  }
+
+  return result;
+}
+
+// ===============================
+// CONNECTIVITY (PEARSON)
+// ===============================
+
+function pearson(a,b){
+  const ma = mean(a);
+  const mb = mean(b);
+
+  let num=0, da=0, db=0;
+
+  for(let i=0;i<a.length;i++){
+    const x=a[i]-ma, y=b[i]-mb;
+    num += x*y;
+    da += x*x;
+    db += y*y;
+  }
+
+  return num/Math.sqrt(da*db || 1);
+}
+
+function connectivityMatrix(data){
+  const ch = data[0].length;
+  const mat = Array.from({length:ch},()=>Array(ch).fill(0));
+
+  for(let i=0;i<ch;i++){
+    const a = data.map(r=>r[i]);
+
+    for(let j=i+1;j<ch;j++){
+      const b = data.map(r=>r[j]);
+      const r = pearson(a,b);
+      mat[i][j]=mat[j][i]=r;
     }
+  }
 
+  return mat;
+}
 
-# ─────────────────────────────────────────────
-#  CSV LOADER
-# ─────────────────────────────────────────────
+// ===============================
+// METRICS
+// ===============================
 
-def load_csv(path):
-    """
-    Load a CSV file → numpy array (samples × channels).
-    Skips any header row that contains non-numeric text.
-    Returns (data, column_names) or raises ValueError.
-    """
-    import csv
+function globalConnectivity(mat){
+  let sum=0,count=0;
 
-    rows = []
-    headers = None
-
-    with open(path, newline="") as f:
-        reader = csv.reader(f)
-        for i, row in enumerate(reader):
-            if i == 0:
-                try:
-                    [float(v) for v in row]
-                    rows.append([float(v) for v in row])
-                except ValueError:
-                    headers = row   # first row is a header
-                continue
-            try:
-                rows.append([float(v) for v in row])
-            except ValueError:
-                raise ValueError(f"Non-numeric value found on row {i+1}.")
-
-    if not rows:
-        raise ValueError("CSV is empty after parsing.")
-
-    data = np.array(rows, dtype=np.float64)   # shape: (samples, channels)
-    return data, headers
-
-
-# ─────────────────────────────────────────────
-#  DATA VALIDATION
-# ─────────────────────────────────────────────
-
-def validate(data: np.ndarray, fs: float) -> dict | None:
-    """
-    Run all pre-analysis quality checks.
-    Returns None on success, or an error-result dict on failure.
-    data shape: (samples, channels)
-    """
-    if data.ndim != 2:
-        return _err("Data must be 2-D (samples × channels).")
-
-    n_samples, n_channels = data.shape
-
-    # 1. Minimum channels
-    if n_channels < MIN_CHANNELS:
-        return _err(
-            f"At least {MIN_CHANNELS} channels required; got {n_channels}."
-        )
-
-    # 2. Minimum duration
-    duration = n_samples / fs
-    if duration < MIN_DURATION_SEC:
-        return _err(
-            f"Recording too short: {duration:.2f}s < {MIN_DURATION_SEC}s minimum."
-        )
-
-    # 3. NaN / Inf check
-    if not np.all(np.isfinite(data)):
-        n_bad = np.sum(~np.isfinite(data))
-        return _err(f"Data contains {n_bad} NaN or Inf values.")
-
-    # 4. Zero / constant channels
-    variances = np.var(data, axis=0)
-    zero_ch = np.where(variances == 0)[0]
-    if len(zero_ch) > 0:
-        return _err(
-            f"Channel(s) {zero_ch.tolist()} are constant (zero variance). "
-            "Remove or re-reference before analysis."
-        )
-
-    # 5. Extreme clipping detection
-    for ch in range(n_channels):
-        ch_data = data[:, ch]
-        sd = np.std(ch_data)
-        if sd == 0:
-            continue
-        z = np.abs(ch_data - np.mean(ch_data)) / sd
-        clip_ratio = np.mean(z > CLIP_THRESHOLD_SD)
-        if clip_ratio > 0.05:   # >5 % of samples clipped
-            return _err(
-                f"Channel {ch} appears severely clipped "
-                f"({clip_ratio*100:.1f}% of samples exceed {CLIP_THRESHOLD_SD}σ).",
-                code="low_quality",
-            )
-
-    return None   # all checks passed
-
-
-# ─────────────────────────────────────────────
-#  PREPROCESSING
-# ─────────────────────────────────────────────
-
-def detrend(ch: np.ndarray) -> np.ndarray:
-    """Remove linear trend (captures slow drift)."""
-    return sp_signal.detrend(ch, type="linear")
-
-
-def remove_dc(ch: np.ndarray) -> np.ndarray:
-    """Subtract mean (DC offset)."""
-    return ch - np.mean(ch)
-
-
-def bandpass(ch: np.ndarray, fs: float, low=0.5, high=45.0) -> np.ndarray:
-    """
-    Zero-phase Butterworth bandpass filter.
-    Uses order 4 with filtfilt for no phase distortion.
-    Nyquist-aware: clamps high to fs/2 - ε.
-    """
-    nyq = fs / 2.0
-    high = min(high, nyq - 0.1)
-    if low >= high:
-        raise ValueError(
-            f"Bandpass bounds invalid: low={low}, high={high} for fs={fs} Hz."
-        )
-    sos = sp_signal.butter(4, [low / nyq, high / nyq], btype="band", output="sos")
-    return sp_signal.sosfiltfilt(sos, ch)
-
-
-def notch(ch: np.ndarray, fs: float, freq: float, q: float = 30.0) -> np.ndarray:
-    """Apply a notch filter at `freq` Hz."""
-    nyq = fs / 2.0
-    if freq >= nyq:
-        return ch  # can't notch above Nyquist
-    b, a = sp_signal.iirnotch(freq / nyq, q)
-    return sp_signal.filtfilt(b, a, ch)
-
-
-def detect_line_noise(ch: np.ndarray, fs: float) -> float | None:
-    """
-    Estimate dominant line-noise frequency (50 or 60 Hz) via Welch PSD.
-    Returns the candidate with higher power, or None if fs too low.
-    """
-    nyq = fs / 2.0
-    candidates = [f for f in NOTCH_CANDIDATES if f < nyq]
-    if not candidates:
-        return None
-
-    freqs, psd = sp_signal.welch(ch, fs=fs, nperseg=min(len(ch), int(fs * 4)))
-    powers = {}
-    for f in candidates:
-        idx = np.argmin(np.abs(freqs - f))
-        # average power in ±1 Hz window
-        mask = (freqs >= f - 1) & (freqs <= f + 1)
-        powers[f] = np.mean(psd[mask]) if mask.any() else 0.0
-
-    best = max(powers, key=powers.get)
-    # only notch if line noise is significantly elevated
-    baseline_mask = (freqs >= 5) & (freqs <= 45)
-    baseline = np.median(psd[baseline_mask]) if baseline_mask.any() else 1e-12
-    if powers[best] > 5 * baseline:
-        return best
-    return None
-
-
-def reject_artifacts(ch: np.ndarray, fs: float, threshold_sd: float = ARTIFACT_THRESHOLD_SD) -> np.ndarray:
-    """
-    Simple amplitude-based artifact rejection.
-    Replaces epochs exceeding threshold with linearly interpolated values.
-    Window: 1-second non-overlapping epochs.
-    """
-    epoch_len = int(fs)
-    result = ch.copy()
-    sd = np.std(ch)
-    if sd == 0:
-        return result
-    threshold = threshold_sd * sd
-
-    n_epochs = len(ch) // epoch_len
-    for i in range(n_epochs):
-        s = i * epoch_len
-        e = s + epoch_len
-        epoch = ch[s:e]
-        if np.max(np.abs(epoch)) > threshold:
-            # linear interpolation across the bad epoch
-            if s > 0 and e < len(result):
-                result[s:e] = np.linspace(result[s-1], result[e], epoch_len)
-            else:
-                result[s:e] = 0.0   # edge case: zero-fill
-    return result
-
-
-def normalize_channel(ch: np.ndarray) -> np.ndarray:
-    """Z-score normalize a single channel."""
-    sd = np.std(ch)
-    if sd == 0:
-        return np.zeros_like(ch)
-    return (ch - np.mean(ch)) / sd
-
-
-def preprocess(data: np.ndarray, fs: float) -> np.ndarray:
-    """
-    Full preprocessing pipeline applied per channel:
-      1. Detrend
-      2. DC removal
-      3. Bandpass 0.5–45 Hz
-      4. Auto-detected notch filter
-      5. Artifact rejection
-      6. Z-score normalization
-    Returns array of same shape (samples × channels).
-    """
-    n_samples, n_channels = data.shape
-    processed = np.empty_like(data)
-
-    for ch in range(n_channels):
-        x = data[:, ch].copy()
-        x = detrend(x)
-        x = remove_dc(x)
-        x = bandpass(x, fs)
-
-        # detect and remove line noise on first channel (faster)
-        if ch == 0:
-            line_freq = detect_line_noise(x, fs)
-        if line_freq is not None:
-            x = notch(x, fs, line_freq)
-
-        x = reject_artifacts(x, fs)
-        x = normalize_channel(x)
-        processed[:, ch] = x
-
-    return processed
-
-
-# ─────────────────────────────────────────────
-#  FREQUENCY BAND POWER (WELCH)
-# ─────────────────────────────────────────────
-
-def welch_band_power(ch: np.ndarray, fs: float) -> dict:
-    """
-    Compute absolute and relative band powers using Welch's method.
-    Returns dict with band → {absolute_uV2_Hz, relative_pct}.
-    Never returns NaN; missing bins → 0.
-    """
-    # nperseg: use 4-second windows (or whole signal if shorter)
-    nperseg = min(len(ch), int(fs * 4))
-    if nperseg < 8:
-        # signal too short for meaningful PSD
-        return {b: {"absolute": 0.0, "relative": 0.0} for b in BAND_RANGES}
-
-    freqs, psd = sp_signal.welch(
-        ch, fs=fs, window="hann", nperseg=nperseg,
-        noverlap=nperseg // 2, scaling="density"
-    )
-
-    # Defensive NaN guard on PSD itself
-    if not np.all(np.isfinite(psd)):
-        psd = np.where(np.isfinite(psd), psd, 0.0)
-
-    total_power = np.trapz(psd, freqs)
-    if total_power <= 0 or not np.isfinite(total_power):
-        total_power = 1.0   # avoid division by zero
-
-    results = {}
-    for band, (lo, hi) in BAND_RANGES.items():
-        mask = (freqs >= lo) & (freqs <= hi)
-        if not mask.any():
-            results[band] = {"absolute": 0.0, "relative": 0.0}
-            continue
-        abs_power = float(np.trapz(psd[mask], freqs[mask]))
-        abs_power = max(0.0, abs_power)   # no negative power
-        rel_power = abs_power / total_power * 100.0
-        results[band] = {
-            "absolute": round(abs_power, 6),
-            "relative": round(rel_power, 4),
-        }
-
-    return results
-
-
-def compute_all_band_powers(data: np.ndarray, fs: float) -> dict:
-    """
-    Average band powers across all channels.
-    Returns dict: band → {absolute, relative, per_channel}.
-    """
-    n_channels = data.shape[1]
-    per_channel = [welch_band_power(data[:, ch], fs) for ch in range(n_channels)]
-
-    averaged = {}
-    for band in BAND_RANGES:
-        abs_vals = [pc[band]["absolute"] for pc in per_channel]
-        rel_vals = [pc[band]["relative"] for pc in per_channel]
-        averaged[band] = {
-            "absolute": round(float(np.mean(abs_vals)), 6),
-            "relative": round(float(np.mean(rel_vals)), 4),
-            "per_channel": {
-                "absolute": [round(v, 6) for v in abs_vals],
-                "relative": [round(v, 4) for v in rel_vals],
-            },
-        }
-    return averaged
-
-
-# ─────────────────────────────────────────────
-#  CONNECTIVITY (PEARSON + COHERENCE OPTION)
-# ─────────────────────────────────────────────
-
-def pearson_connectivity(data: np.ndarray) -> np.ndarray:
-    """
-    Compute pairwise Pearson correlation matrix.
-    Returns symmetric matrix (n_ch × n_ch) with diagonal = 0.
-    NaN-safe.
-    """
-    n_channels = data.shape[1]
-    matrix = np.zeros((n_channels, n_channels))
-
-    for i in range(n_channels):
-        for j in range(i + 1, n_channels):
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                r, _ = pearsonr(data[:, i], data[:, j])
-            if not np.isfinite(r):
-                r = 0.0
-            matrix[i, j] = r
-            matrix[j, i] = r   # enforce symmetry
-
-    return matrix
-
-
-def coherence_connectivity(data: np.ndarray, fs: float,
-                            fmin: float = 0.5, fmax: float = 45.0) -> np.ndarray:
-    """
-    Mean coherence in [fmin, fmax] Hz as connectivity measure.
-    Coherence ∈ [0, 1]; more interpretable than raw correlation.
-    """
-    n_channels = data.shape[1]
-    matrix = np.zeros((n_channels, n_channels))
-    nperseg = min(data.shape[0], int(fs * 4))
-
-    for i in range(n_channels):
-        for j in range(i + 1, n_channels):
-            freqs, coh = sp_signal.coherence(
-                data[:, i], data[:, j], fs=fs,
-                nperseg=nperseg, noverlap=nperseg // 2
-            )
-            mask = (freqs >= fmin) & (freqs <= fmax)
-            if not mask.any():
-                val = 0.0
-            else:
-                val = float(np.mean(coh[mask]))
-                if not np.isfinite(val):
-                    val = 0.0
-            matrix[i, j] = val
-            matrix[j, i] = val
-
-    return matrix
-
-
-def build_edge_list(matrix: np.ndarray, threshold: float = CONN_THRESHOLD) -> list[dict]:
-    """
-    Convert upper triangle of connectivity matrix to a list of edges
-    with strength above `threshold`. Self-connections excluded.
-    """
-    n = matrix.shape[0]
-    edges = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            val = float(matrix[i, j])
-            if abs(val) >= threshold:
-                edges.append({
-                    "source": i,
-                    "target": j,
-                    "weight": round(val, 4),
-                    "strength": "strong" if abs(val) >= 0.7 else "moderate",
-                })
-    return edges
-
-
-# ─────────────────────────────────────────────
-#  METRICS
-# ─────────────────────────────────────────────
-
-def compute_metrics(data: np.ndarray, matrix: np.ndarray,
-                    bands: dict, fs: float) -> dict:
-    """
-    Compute summary metrics from preprocessed data and connectivity matrix.
-    All values are statistically grounded — no made-up labels.
-    """
-    n_samples, n_channels = data.shape
-    n = matrix.shape[0]
-
-    # Global connectivity = mean of upper triangle
-    upper = [matrix[i, j] for i in range(n) for j in range(i+1, n)]
-    global_conn = float(np.mean(upper)) if upper else 0.0
-
-    # Network density = fraction of edges exceeding threshold
-    n_possible = n * (n - 1) / 2
-    n_edges = sum(1 for v in upper if abs(v) >= CONN_THRESHOLD)
-    density = n_edges / n_possible if n_possible > 0 else 0.0
-
-    # Signal variability: mean per-channel std (post-normalization ≈ 1 always,
-    # so report raw signal coefficient of variation before normalization → use
-    # relative std of column means across channels)
-    channel_means = np.mean(data, axis=0)
-    variability = float(np.std(channel_means))
-
-    # Spectral balance ratios (from averaged band powers)
-    alpha_power = bands["alpha"]["absolute"]
-    beta_power  = bands["beta"]["absolute"]
-    theta_power = bands["theta"]["absolute"]
-    delta_power = bands["delta"]["absolute"]
-
-    # Theta/Alpha ratio (elevated in drowsiness / cognitive load)
-    theta_alpha = (theta_power / alpha_power) if alpha_power > 0 else None
-
-    # Delta/Beta ratio (elevated in deep sleep or encephalopathy)
-    delta_beta  = (delta_power / beta_power)  if beta_power > 0 else None
-
-    # Dominant frequency band
-    band_abs = {b: bands[b]["absolute"] for b in BAND_RANGES}
-    dominant_band = max(band_abs, key=band_abs.get)
-
-    return {
-        "global_connectivity": round(global_conn, 4),
-        "network_density": round(density, 4),
-        "n_significant_edges": n_edges,
-        "n_possible_edges": int(n_possible),
-        "signal_variability": round(variability, 4),
-        "dominant_band": dominant_band,
-        "spectral_ratios": {
-            "theta_alpha": round(theta_alpha, 4) if theta_alpha is not None else "n/a",
-            "delta_beta":  round(delta_beta, 4)  if delta_beta  is not None else "n/a",
-        },
-        "data_quality": {
-            "n_samples": n_samples,
-            "n_channels": n_channels,
-            "duration_sec": round(n_samples / fs, 2),
-            "sampling_rate": fs,
-        },
+  for(let i=0;i<mat.length;i++){
+    for(let j=i+1;j<mat.length;j++){
+      sum += Math.abs(mat[i][j]);
+      count++;
     }
+  }
 
+  return count ? sum/count : 0;
+}
 
-# ─────────────────────────────────────────────
-#  MAIN PIPELINE
-# ─────────────────────────────────────────────
+// ===============================
+// MAIN ANALYSIS
+// ===============================
 
-class EEGPipeline:
-    """
-    Full EEG analysis pipeline.
+async function analyze(){
 
-    Parameters
-    ----------
-    data : np.ndarray, shape (samples, channels)
-    fs   : float  — sampling rate in Hz
-    method : "pearson" | "coherence"  — connectivity method
+  const file = document.getElementById("fileInput").files[0];
+  if(!file) return;
 
-    Usage
-    -----
-    result = EEGPipeline(data, fs=250).run()
-    if result["status"] == "ok":
-        print(result["metrics"])
-    else:
-        print("Error:", result["message"])
-    """
+  const text = await file.text();
+  const raw = parseCSV(text);
 
-    def __init__(self, data: np.ndarray, fs: float, method: str = "coherence"):
-        self.data   = np.array(data, dtype=np.float64)
-        self.fs     = float(fs)
-        self.method = method
+  const fs = 256;
 
-    def run(self) -> dict:
-        # ── 1. Validate raw data ──────────────────────────
-        err = validate(self.data, self.fs)
-        if err is not None:
-            return err
+  const err = validate(raw, fs);
+  if(err){
+    out.textContent = err;
+    return;
+  }
 
-        # ── 2. Preprocess ─────────────────────────────────
-        try:
-            processed = preprocess(self.data, self.fs)
-        except Exception as exc:
-            return _err(f"Preprocessing failed: {exc}")
+  // preprocess per channel
+  const samples = raw.length;
+  const ch = raw[0].length;
 
-        # ── 3. Validate processed data (NaN guard) ────────
-        if not np.all(np.isfinite(processed)):
-            return _err(
-                "Processed data contains NaN/Inf — likely caused by "
-                "a degenerate signal after filtering. Check input quality."
-            )
+  const proc = [];
 
-        # ── 4. Band powers ────────────────────────────────
-        try:
-            bands = compute_all_band_powers(processed, self.fs)
-        except Exception as exc:
-            return _err(f"Frequency analysis failed: {exc}")
+  for(let i=0;i<samples;i++) proc[i]=[];
 
-        # ── 5. Connectivity ───────────────────────────────
-        try:
-            if self.method == "coherence":
-                matrix = coherence_connectivity(processed, self.fs)
-            else:
-                matrix = pearson_connectivity(processed)
-        except Exception as exc:
-            return _err(f"Connectivity computation failed: {exc}")
+  for(let c=0;c<ch;c++){
+    let signal = raw.map(r=>r[c]);
 
-        edges = build_edge_list(matrix)
+    signal = detrend(signal);
+    signal = normalize(signal);
 
-        connectivity_result = {
-            "method": self.method,
-            "matrix": matrix.tolist(),
-            "edges": edges,
-            "n_edges": len(edges),
-            "all_weak": len(edges) == 0,
-            "threshold_used": CONN_THRESHOLD,
-            "note": (
-                "No significant connections found above threshold. "
-                "Data may be too short, noisy, or channels may be independent."
-                if len(edges) == 0 else None
-            ),
-        }
+    for(let i=0;i<samples;i++)
+      proc[i][c] = signal[i];
+  }
 
-        # ── 6. Metrics ────────────────────────────────────
-        try:
-            metrics = compute_metrics(processed, matrix, bands, self.fs)
-        except Exception as exc:
-            return _err(f"Metrics computation failed: {exc}")
+  const bands = bandPowers(proc.map(r=>r[0]), fs);
+  const conn = connectivityMatrix(proc);
 
-        # ── 7. Quality assessment ─────────────────────────
-        warnings_list = []
+  const result = {
+    status:"ok",
+    global_connectivity: globalConnectivity(conn),
+    dominant_band: Object.entries(bands)
+      .sort((a,b)=>b[1].absolute-a[1].absolute)[0][0],
+    band_powers: bands
+  };
 
-        if connectivity_result["all_weak"]:
-            warnings_list.append(
-                "No channel pairs exceeded the connectivity threshold "
-                f"({CONN_THRESHOLD}). Connectivity metrics are unreliable."
-            )
+  out.textContent = JSON.stringify(result,null,2);
+}
+</script>
 
-        total_power = sum(bands[b]["absolute"] for b in BAND_RANGES)
-        if total_power < 1e-10:
-            warnings_list.append(
-                "Total spectral power is near zero — signal may be "
-                "effectively flat after filtering."
-            )
-
-        if warnings_list:
-            return _warn(
-                " | ".join(warnings_list),
-                metrics=metrics,
-                bands=bands,
-                connectivity=connectivity_result,
-            )
-
-        return _ok(metrics, bands, connectivity_result)
-
-
-# ─────────────────────────────────────────────
-#  CONVENIENCE: load CSV and run
-# ─────────────────────────────────────────────
-
-def analyze_csv(path: str, fs: float, method: str = "coherence") -> dict:
-    """
-    Load a CSV file and run the full pipeline.
-
-    Parameters
-    ----------
-    path   : path to .csv file (samples × channels, optional header row)
-    fs     : sampling rate in Hz
-    method : "pearson" or "coherence"
-
-    Returns
-    -------
-    Structured result dict (see EEGPipeline.run)
-    """
-    try:
-        data, headers = load_csv(path)
-    except Exception as exc:
-        return _err(f"Failed to load CSV: {exc}")
-
-    return EEGPipeline(data, fs=fs, method=method).run()
-
-
-# ─────────────────────────────────────────────
-#  QUICK DEMO / SELF-TEST
-# ─────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import json
-
-    print("=" * 60)
-    print("BCMNeuro EEG Pipeline — Self-test")
-    print("=" * 60)
-
-    rng = np.random.default_rng(42)
-    fs = 256.0           # 256 Hz sampling rate
-    duration = 10.0      # 10-second recording
-    n_samples = int(fs * duration)
-    n_channels = 8
-
-    t = np.linspace(0, duration, n_samples)
-
-    # Simulate multi-channel EEG: alpha + beta + noise
-    data = np.zeros((n_samples, n_channels))
-    for ch in range(n_channels):
-        alpha = 10.0 * np.sin(2 * np.pi * 10 * t + rng.uniform(0, 2*np.pi))
-        beta  =  3.0 * np.sin(2 * np.pi * 20 * t + rng.uniform(0, 2*np.pi))
-        noise =  1.0 * rng.standard_normal(n_samples)
-        data[:, ch] = alpha + beta + noise
-
-    result = EEGPipeline(data, fs=fs, method="coherence").run()
-
-    # Pretty-print (strip the full matrix for readability)
-    display = {k: v for k, v in result.items() if k != "connectivity"}
-    if result.get("connectivity"):
-        display["connectivity"] = {
-            k: v for k, v in result["connectivity"].items() if k != "matrix"
-        }
-
-    print(json.dumps(display, indent=2))
-    print()
-    print(f"Status : {result['status']}")
-    print(f"Message: {result['message']}")
-    if result["connectivity"]:
-        print(f"Edges  : {result['connectivity']['n_edges']}")
+</body>
+</html>
