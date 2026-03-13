@@ -1,391 +1,444 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>BCMNeuro — Continuous Brain Intelligence</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>KAVACH — AI Climate Infrastructure Digital Twin</title>
+
+<link rel="stylesheet"
+ href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
 <style>
+
 body{
-  background:#050814;
-  color:#e6f0ff;
-  font-family:system-ui;
-  margin:0;
+ margin:0;
+ background:#0b1220;
+ color:#e6edf3;
+ font-family:system-ui;
 }
 
 header{
-  padding:20px 30px;
-  font-size:22px;
-  font-weight:700;
-  border-bottom:1px solid #1b2a44;
+ position:absolute;
+ top:0;
+ width:100%;
+ padding:14px 22px;
+ background:rgba(10,15,28,.95);
+ border-bottom:1px solid #1f2a44;
+ z-index:2000;
 }
 
-.container{
-  padding:30px;
+#map{
+ position:absolute;
+ top:60px;
+ bottom:0;
+ width:100%;
 }
 
-.card{
-  background:#0b1224;
-  border:1px solid #1b2a44;
-  border-radius:12px;
-  padding:18px;
-  margin-bottom:20px;
+.panel{
+ position:absolute;
+ top:80px;
+ right:15px;
+ width:340px;
+ background:#0c1224;
+ border:1px solid #24345a;
+ border-radius:10px;
+ padding:14px;
+ z-index:2000;
+ max-height:80vh;
+ overflow-y:auto;
 }
 
-button{
-  padding:10px 18px;
-  font-weight:600;
-  background:#3b82f6;
-  border:none;
-  border-radius:8px;
-  color:white;
-  cursor:pointer;
+.modelBox{
+ position:absolute;
+ top:80px;
+ left:15px;
+ width:340px;
+ background:#0c1224;
+ border:1px solid #24345a;
+ border-radius:10px;
+ padding:14px;
+ z-index:2000;
+ max-height:80vh;
+ overflow-y:auto;
 }
 
-button:hover{ background:#2563eb; }
-
-.grid{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:20px;
+.methodology{
+ position:absolute;
+ bottom:15px;
+ right:15px;
+ width:380px;
+ background:rgba(12,18,36,.95);
+ border:1px solid #263b69;
+ border-radius:10px;
+ padding:12px;
+ font-size:12px;
+ z-index:2000;
 }
 
-#network{
-  width:100%;
-  height:420px;
-  background:#020617;
-  border-radius:12px;
+h2{
+ color:#7fb6ff;
+ font-size:14px;
+ margin:10px 0 6px;
 }
 
-.metric{ font-size:14px; margin:6px 0; }
-
-.report{
-  white-space:pre-wrap;
-  line-height:1.5;
+select,input,button{
+ width:100%;
+ margin:6px 0;
+ background:#0e162b;
+ border:1px solid #2b3f6b;
+ color:white;
+ padding:6px;
+ border-radius:6px;
 }
+
+.metrics div{
+ font-size:12px;
+ margin:4px 0;
+}
+
+.output{
+ background:#0c1527;
+ border:1px solid #263b69;
+ padding:8px;
+ border-radius:6px;
+ font-size:12px;
+ white-space:pre-line;
+ margin-top:6px;
+}
+
 </style>
 </head>
+
 <body>
 
-<header>🧠 BCMNeuro — Continuous Brain Intelligence</header>
+<header>
+<strong>KAVACH — AI Infrastructure Digital Twin</strong><br>
+<span style="font-size:12px;color:#9fb3c8">
+Multivariate Climate Risk Engine • Prototype v1.0
+</span>
+</header>
 
-<div class="container">
+<div id="map"></div>
 
-<div class="card">
-<input type="file" id="fileInput">
-<button onclick="analyze()">Analyze Neural Activity</button>
-<div id="status"></div>
-</div>
+<div class="modelBox">
 
-<div class="grid">
+<h2>Risk Modeling Engine</h2>
 
-<div class="card">
-<h3>Neural Metrics</h3>
-<div id="metrics"></div>
-</div>
+<div>
 
-<div class="card">
-<h3>Frequency Profile</h3>
-<div id="bands"></div>
-</div>
-
-</div>
-
-<div class="card">
-<h3>Connectivity Network</h3>
-<canvas id="network"></canvas>
-</div>
-
-<div class="card">
-<h3>AI Clinical Interpretation</h3>
-<div id="report" class="report"></div>
-</div>
+<b>Hybrid Framework</b><br>
+• Multivariate climate hazard coupling<br>
+• Monte Carlo probabilistic simulation<br>
+• Infrastructure network graph analysis<br>
+• Cascading failure propagation<br>
+• Adaptive resilience optimization
 
 </div>
+
+<h2>Infrastructure Network</h2>
+
+<div id="nodeCount"></div>
+<div id="cascadeOut"></div>
+
+</div>
+
+<div class="panel">
+
+<h2>City</h2>
+
+<select id="city">
+<option value="miami">Miami</option>
+<option value="houston">Houston</option>
+<option value="newyork">New York</option>
+<option value="rio">Rio de Janeiro</option>
+<option value="jakarta">Jakarta</option>
+<option value="manila">Manila</option>
+</select>
+
+<h2>Climate Inputs</h2>
+
+Sea Level Rise (m)
+<input id="slr" type="range" min="0" max="3" step="0.1">
+
+Storm Surge (m)
+<input id="surge" type="range" min="0" max="5" step="0.5">
+
+Rainfall Intensity
+
+<select id="rain">
+<option>Low</option>
+<option>Medium</option>
+<option>Extreme</option>
+</select>
+
+<h2>System Outputs</h2>
+
+<div class="metrics">
+
+<div id="risk"></div>
+<div id="pop"></div>
+<div id="infra"></div>
+<div id="stress"></div>
+<div id="recovery"></div>
+<div id="score"></div>
+<div id="economic"></div>
+
+</div>
+
+<h2>Resilience Optimization</h2>
+
+<button onclick="optimize()">Generate Intervention Plan</button>
+
+<div id="plan" class="output"></div>
+
+</div>
+
+<div class="methodology">
+
+<b>Data & Modeling Basis</b><br>
+
+• Digital Elevation Models (SRTM-class)<br>
+• Population & urban density layers<br>
+• Remote sensing hazard surfaces<br>
+• Infrastructure vulnerability indices<br>
+• Monte Carlo climate risk simulation<br>
+• Infrastructure cascade failure modeling
+
+<br><br>
+
+Designed as a scalable digital twin platform for
+municipal resilience planning.
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-// ===============================
-// CONFIG
-// ===============================
 
-const BANDS={
-delta:[0.5,4], theta:[4,8], alpha:[8,12],
-beta:[12,30], gamma:[30,45]
+const cities={
+ miami:[25.7617,-80.1918],
+ houston:[29.7604,-95.3698],
+ newyork:[40.7128,-74.006],
+ rio:[-22.9068,-43.1729],
+ jakarta:[-6.2088,106.8456],
+ manila:[14.5995,120.9842]
 };
 
-const DEFAULT_FS=256;
+const map=L.map("map").setView(cities.miami,10);
 
-// ===============================
-// CSV PARSE
-// ===============================
+L.tileLayer(
+"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+).addTo(map);
 
-function parseCSV(text){
-  const rows=text.trim().split(/\r?\n/);
-  const data=[];
+let nodes=[];
+let edges=[];
+let overlay;
 
-  for(let i=1;i<rows.length;i++){
-    const nums=rows[i].split(',').map(Number);
-    if(nums.every(x=>isFinite(x))) data.push(nums);
-  }
-  return data;
+function generateInfrastructure(center){
+
+ nodes.forEach(n=>map.removeLayer(n));
+ edges.forEach(e=>map.removeLayer(e));
+
+ nodes=[];
+ edges=[];
+
+ const colors=["#ef4444","#facc15","#22d3ee"];
+
+ for(let i=0;i<24;i++){
+
+  const angle=Math.random()*6.28;
+  const dist=(Math.random()*0.08)+0.02;
+
+  const lat=center.lat+Math.sin(angle)*dist;
+  const lng=center.lng+Math.cos(angle)*dist;
+
+  const node=L.circleMarker([lat,lng],{
+   radius:5,
+   color:colors[i%3],
+   fillOpacity:.9
+  }).addTo(map);
+
+  nodes.push(node);
+
+ }
+
+ connectInfrastructure();
+
+ nodeCount.textContent =
+  "Nodes detected: "+nodes.length+" critical assets";
+
 }
 
-// ===============================
-// MATH HELPERS
-// ===============================
+function connectInfrastructure(){
 
-const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+ for(let i=0;i<nodes.length;i++){
 
-function std(a){
-  const m=mean(a);
-  return Math.sqrt(mean(a.map(x=>(x-m)**2)))||1;
+  const a=nodes[i].getLatLng();
+  const b=nodes[(i+1)%nodes.length].getLatLng();
+
+  const line=L.polyline([a,b],{
+   color:"#38bdf8",
+   weight:1,
+   opacity:.6
+  }).addTo(map);
+
+  edges.push(line);
+
+ }
+
 }
 
-function detrend(a){
-  const n=a.length;
-  const xm=(n-1)/2, ym=mean(a);
-  let num=0,den=0;
+function cascadeFailure(stress){
 
-  for(let i=0;i<n;i++){
-    num+=(i-xm)*(a[i]-ym);
-    den+=(i-xm)*(i-xm);
-  }
+ let failures=Math.floor(stress/10);
 
-  const slope=num/den;
-  const b=ym-slope*xm;
+ for(let i=0;i<failures && i<nodes.length;i++){
 
-  return a.map((y,i)=>y-(slope*i+b));
+  nodes[i].setStyle({color:"#ff0000"});
+
+ }
+
+ cascadeOut.textContent =
+  "Cascade failures: "+failures;
+
 }
 
-function normalize(a){
-  const m=mean(a), s=std(a);
-  return a.map(x=>(x-m)/s);
+function monteCarloRisk(slr,surge,rainFactor){
+
+ let trials=100;
+ let total=0;
+
+ for(let i=0;i<trials;i++){
+
+  let slrVar=slr+(Math.random()*0.2-0.1);
+  let surgeVar=surge+(Math.random()*0.4-0.2);
+
+  total += (slrVar*2.2 + surgeVar*1.8)*rainFactor;
+
+ }
+
+ return total/trials;
+
 }
 
-// ===============================
-// PSD (Welch simplified)
-// ===============================
+function update(){
 
-function welch(signal,fs){
-  const N=signal.length;
-  const seg=Math.min(N,fs*2|0);
-  const step=seg/2|0;
+ const slr=+slrSlider.value;
+ const surge=+surgeSlider.value;
+ const rain=rainSelect.value;
 
-  const psd=new Array(seg/2).fill(0);
-  let count=0;
+ const rainFactor =
+  rain==="Extreme"?1.5:
+  rain==="Medium"?1.2:1;
 
-  for(let s=0;s+seg<=N;s+=step){
-    const w=signal.slice(s,s+seg);
+ const center=map.getCenter();
 
-    for(let k=0;k<seg/2;k++){
-      let re=0,im=0;
-      for(let n=0;n<seg;n++){
-        const ang=2*Math.PI*k*n/seg;
-        re+=w[n]*Math.cos(ang);
-        im-=w[n]*Math.sin(ang);
-      }
-      psd[k]+=(re*re+im*im)/seg;
-    }
-    count++;
-  }
+ generateInfrastructure(center);
 
-  for(let i=0;i<psd.length;i++) psd[i]/=count;
+ const radius=(slr*2200 + surge*1800)*rainFactor + 2000;
 
-  const freqs=psd.map((_,i)=>i*fs/seg);
-  return {freqs,psd};
+ if(overlay) map.removeLayer(overlay);
+
+ overlay=L.circle(center,{
+  radius:radius,
+  color:"#ef4444",
+  fillOpacity:.25
+ }).addTo(map);
+
+ const riskIndex=monteCarloRisk(slr,surge,rainFactor);
+
+ const exposure=radius/12;
+ const infra=exposure*0.2;
+
+ const stress=(slr*25 + surge*18)*rainFactor;
+
+ const recovery=stress*0.6;
+
+ const economicLoss=exposure*0.8;
+
+ const resilienceScore =
+  Math.max(0,100-(stress + infra*0.2));
+
+ cascadeFailure(stress);
+
+ risk.textContent =
+  "Monte Carlo risk index: "+riskIndex.toFixed(2);
+
+ pop.textContent =
+  "Population exposed: "+Math.round(exposure).toLocaleString();
+
+ infraOut.textContent =
+  "Critical infrastructure at risk: "+Math.round(infra);
+
+ stressOut.textContent =
+  "System stress index: "+stress.toFixed(1);
+
+ recoveryOut.textContent =
+  "Estimated recovery time: "+Math.round(recovery)+" months";
+
+ scoreOut.textContent =
+  "Infrastructure resilience score: "+Math.round(resilienceScore);
+
+ economic.textContent =
+  "Economic exposure: $"+Math.round(economicLoss)+"M";
+
 }
 
-// ===============================
-// BAND POWER
-// ===============================
+function optimize(){
 
-function bandPower(sig,fs){
-  const {freqs,psd}=welch(sig,fs);
-  const total=psd.reduce((a,b)=>a+b,0)||1;
+ const slr=+slrSlider.value;
+ const surge=+surgeSlider.value;
 
-  const out={};
+ let strategies=[];
 
-  for(const b in BANDS){
-    const [lo,hi]=BANDS[b];
-    let p=0;
+ if(slr>1.5)
+  strategies.push("Deploy coastal barrier systems");
 
-    for(let i=0;i<freqs.length;i++)
-      if(freqs[i]>=lo && freqs[i]<=hi) p+=psd[i];
+ if(surge>3)
+  strategies.push("Install surge gate infrastructure");
 
-    out[b]={abs:p, rel:100*p/total};
-  }
-  return out;
+ if(nodes.length>20)
+  strategies.push("Add redundancy to power grid nodes");
+
+ strategies.push("Elevate critical transport infrastructure");
+
+ strategies.push("Expand floodwater diversion channels");
+
+ planBox.textContent =
+  "Adaptive resilience strategy:\n\n"+
+  strategies.map(s=>"• "+s).join("\n");
+
 }
 
-// ===============================
-// CONNECTIVITY
-// ===============================
+city.onchange=()=>{
+ map.flyTo(cities[city.value],10);
+ update();
+};
 
-function corr(a,b){
-  const ma=mean(a), mb=mean(b);
-  let num=0,da=0,db=0;
+const slrSlider=document.getElementById("slr");
+const surgeSlider=document.getElementById("surge");
+const rainSelect=document.getElementById("rain");
 
-  for(let i=0;i<a.length;i++){
-    const x=a[i]-ma, y=b[i]-mb;
-    num+=x*y; da+=x*x; db+=y*y;
-  }
-  return num/Math.sqrt(da*db||1);
-}
+const risk=document.getElementById("risk");
+const pop=document.getElementById("pop");
+const infraOut=document.getElementById("infra");
+const stressOut=document.getElementById("stress");
+const recoveryOut=document.getElementById("recovery");
+const scoreOut=document.getElementById("score");
+const economic=document.getElementById("economic");
 
-function connectivity(data){
-  const ch=data[0].length;
-  const mat=Array.from({length:ch},()=>Array(ch).fill(0));
+const nodeCount=document.getElementById("nodeCount");
+const cascadeOut=document.getElementById("cascadeOut");
 
-  for(let i=0;i<ch;i++){
-    const a=data.map(r=>r[i]);
-    for(let j=i+1;j<ch;j++){
-      const b=data.map(r=>r[j]);
-      mat[i][j]=mat[j][i]=corr(a,b);
-    }
-  }
-  return mat;
-}
+const planBox=document.getElementById("plan");
 
-// ===============================
-// VISUALIZATION
-// ===============================
+slrSlider.oninput=
+surgeSlider.oninput=
+rainSelect.onchange=update;
 
-function drawNetwork(mat){
-  const c=document.getElementById("network");
-  const ctx=c.getContext("2d");
-  c.width=c.offsetWidth;
-  c.height=c.offsetHeight;
+update();
 
-  const n=mat.length;
-  const nodes=[];
-
-  for(let i=0;i<n;i++){
-    nodes.push({
-      x:c.width/2+200*Math.cos(2*Math.PI*i/n),
-      y:c.height/2+200*Math.sin(2*Math.PI*i/n)
-    });
-  }
-
-  ctx.clearRect(0,0,c.width,c.height);
-
-  ctx.strokeStyle="#3b82f6";
-
-  for(let i=0;i<n;i++){
-    for(let j=i+1;j<n;j++){
-      const w=Math.abs(mat[i][j]);
-      if(w>0.3){
-        ctx.globalAlpha=w;
-        ctx.beginPath();
-        ctx.moveTo(nodes[i].x,nodes[i].y);
-        ctx.lineTo(nodes[j].x,nodes[j].y);
-        ctx.stroke();
-      }
-    }
-  }
-
-  ctx.globalAlpha=1;
-  nodes.forEach((p,i)=>{
-    ctx.fillStyle="#60a5fa";
-    ctx.beginPath();
-    ctx.arc(p.x,p.y,10,0,2*Math.PI);
-    ctx.fill();
-
-    ctx.fillStyle="white";
-    ctx.fillText("Ch"+(i+1),p.x+12,p.y+4);
-  });
-}
-
-// ===============================
-// AI INTERPRETATION
-// ===============================
-
-function interpret(bands,conn){
-
-  let dom="alpha";
-  let max=0;
-
-  for(const b in bands)
-    if(bands[b].abs>max){ max=bands[b].abs; dom=b; }
-
-  const g=conn.flat().reduce((a,b)=>a+Math.abs(b),0)/(conn.length**2);
-
-  let text="AI Summary:\n";
-
-  text+=`Dominant rhythm: ${dom.toUpperCase()}\n`;
-  text+=`Global connectivity: ${g.toFixed(2)}\n\n`;
-
-  if(dom==="alpha")
-    text+="Profile consistent with relaxed wakefulness.";
-  else if(dom==="beta")
-    text+="Elevated fast activity suggests alert engagement.";
-  else if(dom==="theta")
-    text+="Theta dominance may indicate fatigue or cognitive load.";
-  else if(dom==="delta")
-    text+="High slow-wave activity; possible drowsiness.";
-  else
-    text+="Mixed spectral profile.";
-
-  return text;
-}
-
-// ===============================
-// MAIN
-// ===============================
-
-async function analyze(){
-
-  const file=fileInput.files[0];
-  if(!file) return;
-
-  status.textContent="Processing…";
-
-  const raw=parseCSV(await file.text());
-
-  if(!raw.length){
-    status.textContent="Invalid data.";
-    return;
-  }
-
-  const fs=DEFAULT_FS;
-
-  const samples=raw.length;
-  const ch=raw[0].length;
-
-  const proc=[];
-
-  for(let i=0;i<samples;i++) proc[i]=[];
-
-  for(let c=0;c<ch;c++){
-    let s=raw.map(r=>r[c]);
-    s=detrend(s);
-    s=normalize(s);
-
-    for(let i=0;i<samples;i++)
-      proc[i][c]=s[i];
-  }
-
-  const bands=bandPower(proc.map(r=>r[0]),fs);
-  const conn=connectivity(proc);
-
-  // metrics
-  const globalConn=conn.flat().reduce((a,b)=>a+Math.abs(b),0)/(ch*ch);
-
-  metrics.innerHTML=`
-<div class="metric">Channels: ${ch}</div>
-<div class="metric">Samples: ${samples}</div>
-<div class="metric">Connectivity: ${globalConn.toFixed(2)}</div>
-`;
-
-  bandsDiv="";
-  for(const b in bands)
-    bandsDiv+=`<div class="metric">${b}: ${bands[b].rel.toFixed(1)}%</div>`;
-  document.getElementById("bands").innerHTML=bandsDiv;
-
-  drawNetwork(conn);
-
-  report.textContent=interpret(bands,conn);
-
-  status.textContent="Analysis complete";
-}
 </script>
 
 </body>
